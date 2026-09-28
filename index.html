@@ -1,0 +1,440 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=yes">
+  <title>Central de Iluminação IoT · Porta 13</title>
+  <!-- Tailwind CSS (via CDN) para estilização rápida e moderna -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <!-- Fonte Inter (sans-serif moderna) -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:opsz,wght@14..32,300;14..32,400;14..32,500;14..32,600;14..32,700&display=swap" rel="stylesheet">
+  <!-- Paho MQTT via CDN (exatamente como solicitado) -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/paho-mqtt/1.0.1/mqttws31.min.js"></script>
+  <style>
+    /* Ajustes finos de glassmorphism, animações e transições */
+    body {
+      font-family: 'Inter', system-ui, -apple-system, sans-serif;
+      background: linear-gradient(145deg, #d4e9ff 0%, #f0f7fe 100%);
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      margin: 0;
+      padding: 16px;
+      box-sizing: border-box;
+    }
+    .glass-card {
+      background: rgba(255, 255, 255, 0.65);
+      backdrop-filter: blur(12px);
+      -webkit-backdrop-filter: blur(12px);
+      border: 1px solid rgba(255, 255, 255, 0.6);
+      border-radius: 2rem; /* rounded-2xl (1.5rem) um pouco maior para elegância */
+      box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.15), 0 0 0 1px rgba(255, 255, 255, 0.5) inset;
+      transition: all 0.2s ease;
+    }
+    /* Animação de pulsação para status "Sincronizando" (amarelo) */
+    @keyframes pulse-yellow {
+      0%, 100% { opacity: 1; box-shadow: 0 0 0 0 rgba(250, 204, 21, 0.5); }
+      50% { opacity: 0.8; box-shadow: 0 0 0 8px rgba(250, 204, 21, 0); }
+    }
+    .status-pulse-yellow {
+      animation: pulse-yellow 1.8s infinite;
+    }
+    /* Brilho e pulsação do LED azul neon quando ativo */
+    @keyframes led-glow-pulse {
+      0% { box-shadow: 0 0 12px 2px rgba(0, 180, 255, 0.7), 0 0 25px 8px rgba(0, 150, 255, 0.5), 0 0 40px 15px rgba(0, 120, 255, 0.3); }
+      50% { box-shadow: 0 0 20px 8px rgba(0, 200, 255, 0.9), 0 0 45px 18px rgba(0, 160, 255, 0.7), 0 0 70px 30px rgba(0, 100, 255, 0.4); }
+      100% { box-shadow: 0 0 12px 2px rgba(0, 180, 255, 0.7), 0 0 25px 8px rgba(0, 150, 255, 0.5), 0 0 40px 15px rgba(0, 120, 255, 0.3); }
+    }
+    .led-active {
+      background: radial-gradient(circle at 30% 30%, #5ee0ff, #0077ff);
+      box-shadow: 0 0 12px 2px rgba(0, 180, 255, 0.7), 0 0 25px 8px rgba(0, 150, 255, 0.5), 0 0 40px 15px rgba(0, 120, 255, 0.3);
+      animation: led-glow-pulse 2s infinite ease-in-out;
+      transition: all 0.3s ease;
+    }
+    .led-inactive {
+      background: #b0c6d9; /* cinza azulado fosco */
+      box-shadow: inset 0 4px 10px rgba(0, 0, 0, 0.05), 0 2px 6px rgba(0, 0, 0, 0.05);
+      transition: all 0.3s ease;
+    }
+    /* Botões desabilitados com estilo elegante */
+    button:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+      transform: none !important;
+      filter: grayscale(0.3);
+      box-shadow: none !important;
+    }
+    /* Ajuste para o input de tópico */
+    .topic-input {
+      background: rgba(255, 255, 255, 0.7);
+      border: 1px solid rgba(148, 176, 204, 0.4);
+      border-radius: 60px;
+      padding: 12px 22px;
+      font-size: 0.95rem;
+      transition: all 0.2s ease;
+      color: #1e293b;
+      font-weight: 500;
+      backdrop-filter: blur(4px);
+    }
+    .topic-input:focus {
+      outline: none;
+      border-color: #3b82f6;
+      box-shadow: 0 0 0 4px rgba(59, 130, 246, 0.15);
+      background: rgba(255, 255, 255, 0.9);
+    }
+    /* Pílula de status */
+    .status-pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 8px 20px;
+      border-radius: 60px;
+      font-size: 0.9rem;
+      font-weight: 500;
+      backdrop-filter: blur(4px);
+      transition: all 0.25s ease;
+      background: rgba(255, 255, 255, 0.6);
+      border: 1px solid rgba(255, 255, 255, 0.8);
+    }
+    .status-dot {
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+      transition: background 0.2s, box-shadow 0.2s;
+    }
+  </style>
+</head>
+<body>
+
+  <!-- Card principal flutuante com glassmorphism -->
+  <div class="glass-card w-full max-w-2xl p-7 sm:p-9 text-slate-700">
+    
+    <!-- Cabeçalho minimalista -->
+    <header class="flex flex-col items-center text-center space-y-1 mb-7">
+      <h1 class="text-3xl sm:text-4xl font-bold tracking-tight text-blue-900">Central de Iluminação IoT</h1>
+      <div class="flex items-center justify-center gap-2 text-slate-500 text-sm font-medium bg-white/40 px-4 py-1.5 rounded-full backdrop-blur-sm">
+        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="text-blue-600"><rect x="2" y="3" width="20" height="14" rx="2" ry="2"></rect><line x1="8" y1="21" x2="16" y2="21"></line><line x1="12" y1="17" x2="12" y2="21"></line></svg>
+        <span>Controle de Hardware – Porta 13</span>
+      </div>
+    </header>
+
+    <!-- Status de rede inteligente (pill) -->
+    <div class="flex justify-center mb-6">
+      <div id="statusPill" class="status-pill">
+        <span id="statusDot" class="status-dot bg-yellow-400 status-pulse-yellow"></span>
+        <span id="statusText" class="text-slate-700 font-semibold tracking-wide">Sincronizando...</span>
+      </div>
+    </div>
+
+    <!-- Input interativo de tópico MQTT (editável) -->
+    <div class="mb-8">
+      <label for="topicInput" class="block text-xs font-semibold uppercase tracking-wider text-slate-500 mb-2 ml-2">Tópico MQTT</label>
+      <input id="topicInput" type="text" value="gerry_sanchez_led_exclusivo/arduino" 
+             class="topic-input w-full" 
+             placeholder="Digite o tópico MQTT" 
+             autocomplete="off" spellcheck="false">
+      <p class="text-[0.7rem] text-slate-400 mt-2 ml-2">Ao alterar o tópico, a inscrição é atualizada automaticamente.</p>
+    </div>
+
+    <!-- Simulador do LED (pré-visualização) -->
+    <div class="flex flex-col items-center justify-center my-8">
+      <div id="ledPreview" class="led-inactive w-36 h-36 rounded-full flex items-center justify-center transition-all duration-500 mb-5 border border-white/30">
+        <span id="ledLabel" class="text-sm font-semibold text-slate-600/80 drop-shadow-sm">Dispositivo Inativo</span>
+      </div>
+      <!-- Feedback visual extra do estado (opcional) -->
+      <div class="text-xs text-slate-400 tracking-wide">Estado real reportado pela nuvem</div>
+    </div>
+
+    <!-- Botões de ação suave -->
+    <div class="grid grid-cols-2 gap-4 mt-4">
+      <button id="btnOn" 
+              class="bg-emerald-400 hover:bg-emerald-500 text-white font-semibold py-4 px-4 rounded-2xl shadow-md transition-all duration-200 active:scale-95 disabled:opacity-50 disabled:active:scale-100 flex items-center justify-center gap-2 text-base backdrop-blur-sm"
+              disabled>
+        <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M18.36 6.64a9 9 0 1 1-12.73 0"/><line x1="12" y1="2" x2="12" y2="12"/></svg>
+        LIGAR
+      </button>
+      <button id="btnOff" 
+              class="bg-rose-400 hover:bg-rose-500 text-white font-semibold py-4 px-4 rounded-2xl shadow-md transition-all duration-200 active:scale-95 disabled:opacity-50 disabled:active:scale-100 flex items-center justify-center gap-2 text-base backdrop-blur-sm"
+              disabled>
+        <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+        DESLIGAR
+      </button>
+    </div>
+
+    <!-- Pequeno rodapé informativo -->
+    <div class="mt-7 text-center text-[0.7rem] text-slate-400/80 flex justify-center items-center gap-2">
+      <span>🔒 Broker HiveMQ · WSS 8884</span>
+      <span class="w-1 h-1 rounded-full bg-slate-300"></span>
+      <span>LED só muda após confirmação do broker</span>
+    </div>
+  </div>
+
+  <script>
+    (function() {
+      // ============================================================
+      // 1. Configurações e variáveis globais
+      // ============================================================
+      const BROKER = "broker.hivemq.com";
+      const PORT = 8884;          // WebSockets Secure
+      const DEFAULT_TOPIC = "gerry_sanchez_led_exclusivo/arduino";
+      
+      // Elementos da UI
+      const statusPill = document.getElementById('statusPill');
+      const statusDot = document.getElementById('statusDot');
+      const statusText = document.getElementById('statusText');
+      const topicInput = document.getElementById('topicInput');
+      const ledPreview = document.getElementById('ledPreview');
+      const ledLabel = document.getElementById('ledLabel');
+      const btnOn = document.getElementById('btnOn');
+      const btnOff = document.getElementById('btnOff');
+
+      // Variáveis de estado MQTT
+      let client = null;
+      let isConnected = false;
+      let currentTopic = DEFAULT_TOPIC;   // tópico atualmente assinado
+      let clientId = "web_" + Math.random().toString(16).substring(2, 10) + "_" + Date.now();
+
+      // ============================================================
+      // 2. Funções de UI (status, LED, botões)
+      // ============================================================
+      function setStatus(state) {
+        // state: 'connecting' | 'online' | 'offline'
+        statusDot.className = 'status-dot'; // reset
+        if (state === 'connecting') {
+          statusDot.classList.add('bg-yellow-400', 'status-pulse-yellow');
+          statusText.textContent = 'Sincronizando...';
+          statusText.className = 'text-slate-700 font-semibold tracking-wide';
+          // botões desabilitados
+          btnOn.disabled = true;
+          btnOff.disabled = true;
+        } else if (state === 'online') {
+          statusDot.classList.add('bg-emerald-400');
+          // brilho sutil
+          statusDot.style.boxShadow = '0 0 10px 2px rgba(52, 211, 153, 0.7)';
+          statusText.textContent = 'Sistema Online';
+          statusText.className = 'text-emerald-800 font-semibold tracking-wide';
+          // botões habilitados
+          btnOn.disabled = false;
+          btnOff.disabled = false;
+        } else if (state === 'offline') {
+          statusDot.classList.add('bg-rose-500');
+          statusDot.style.boxShadow = '0 0 10px 2px rgba(244, 63, 94, 0.7)';
+          statusText.textContent = 'Desconectado';
+          statusText.className = 'text-rose-800 font-semibold tracking-wide';
+          btnOn.disabled = true;
+          btnOff.disabled = true;
+        }
+      }
+
+      // Atualiza o visual do LED baseado no payload recebido (SOMENTE via MQTT)
+      function updateLedFromMessage(payload) {
+        // payload deve ser string '1' ou '0'
+        if (payload === '1') {
+          ledPreview.classList.remove('led-inactive');
+          ledPreview.classList.add('led-active');
+          ledLabel.textContent = 'Dispositivo Ativo';
+          ledLabel.className = 'text-sm font-semibold text-white/90 drop-shadow-md';
+        } else if (payload === '0') {
+          ledPreview.classList.remove('led-active');
+          ledPreview.classList.add('led-inactive');
+          ledLabel.textContent = 'Dispositivo Inativo';
+          ledLabel.className = 'text-sm font-semibold text-slate-600/80 drop-shadow-sm';
+        } else {
+          // Qualquer outro valor: mantém inativo, mas com feedback
+          console.warn('Payload inesperado:', payload);
+          ledPreview.classList.remove('led-active');
+          ledPreview.classList.add('led-inactive');
+          ledLabel.textContent = 'Dispositivo Inativo';
+          ledLabel.className = 'text-sm font-semibold text-slate-600/80 drop-shadow-sm';
+        }
+      }
+
+      // ============================================================
+      // 3. Inicialização do cliente MQTT (Paho)
+      // ============================================================
+      function initMQTT() {
+        // Gera ClientID aleatório (já criado, mas garantimos)
+        clientId = "web_" + Math.random().toString(16).substring(2, 12) + "_" + Date.now();
+        
+        // Cria cliente com broker e porta WSS
+        client = new Paho.MQTT.Client(BROKER, PORT, clientId);
+
+        // Define callbacks
+        client.onConnectionLost = onConnectionLost;
+        client.onMessageArrived = onMessageArrived;
+
+        // Conecta com SSL ativado (useSSL: true) e keepAlive
+        client.connect({
+          useSSL: true,
+          onSuccess: onConnect,
+          onFailure: onConnectFailure,
+          timeout: 10,
+          keepAliveInterval: 30,
+          cleanSession: true
+        });
+
+        // Estado inicial: sincronizando
+        setStatus('connecting');
+      }
+
+      // Callback de conexão bem-sucedida
+      function onConnect() {
+        console.log('Conectado ao broker MQTT');
+        isConnected = true;
+        setStatus('online');
+        
+        // Assina o tópico atual (lido do input ou padrão)
+        const topic = topicInput.value.trim() || DEFAULT_TOPIC;
+        currentTopic = topic;
+        subscribeToTopic(currentTopic);
+      }
+
+      // Callback de falha na conexão
+      function onConnectFailure(error) {
+        console.error('Falha na conexão:', error);
+        setStatus('offline');
+        isConnected = false;
+      }
+
+      // Callback de perda de conexão
+      function onConnectionLost(responseObject) {
+        isConnected = false;
+        setStatus('offline');
+        if (responseObject.errorCode !== 0) {
+          console.warn('Conexão perdida:', responseObject.errorMessage);
+        }
+        // Tenta reconectar após 3 segundos
+        setTimeout(() => {
+          if (!isConnected) {
+            console.log('Tentando reconectar...');
+            setStatus('connecting');
+            initMQTT();
+          }
+        }, 3000);
+      }
+
+      // Callback de mensagem recebida — AQUI o LED é atualizado (regra de ouro)
+      function onMessageArrived(message) {
+        const topic = message.destinationName;
+        const payload = message.payloadString;
+        console.log(`Mensagem recebida em ${topic}: ${payload}`);
+        
+        // Atualiza o LED somente se a mensagem for do tópico atual
+        if (topic === currentTopic) {
+          updateLedFromMessage(payload);
+        }
+      }
+
+      // Função para assinar um tópico (e desinscrever do anterior)
+      function subscribeToTopic(newTopic) {
+        if (!client || !isConnected) return;
+        
+        // Se já está inscrito no mesmo tópico, não faz nada
+        if (currentTopic === newTopic) return;
+
+        // Desinscreve do tópico antigo (se existir)
+        if (currentTopic) {
+          try {
+            client.unsubscribe(currentTopic);
+            console.log(`Desinscrito de: ${currentTopic}`);
+          } catch (e) {
+            console.warn('Erro ao desinscrever:', e);
+          }
+        }
+
+        // Assina o novo tópico
+        try {
+          client.subscribe(newTopic, {
+            qos: 0,
+            onSuccess: () => {
+              console.log(`Inscrito em: ${newTopic}`);
+              currentTopic = newTopic;
+            },
+            onFailure: (err) => {
+              console.error('Falha ao assinar:', err);
+            }
+          });
+        } catch (e) {
+          console.error('Erro ao assinar tópico:', e);
+        }
+      }
+
+      // ============================================================
+      // 4. Publicação de comandos
+      // ============================================================
+      function publishCommand(value) {
+        if (!client || !isConnected) {
+          console.warn('Não conectado. Comando ignorado.');
+          return;
+        }
+        const topic = topicInput.value.trim() || DEFAULT_TOPIC;
+        const message = new Paho.MQTT.Message(value);
+        message.destinationName = topic;
+        message.qos = 0;
+        message.retained = false;
+        
+        try {
+          client.send(message);
+          console.log(`Comando "${value}" enviado para ${topic}`);
+        } catch (e) {
+          console.error('Erro ao publicar:', e);
+        }
+      }
+
+      // ============================================================
+      // 5. Event listeners (input de tópico e botões)
+      // ============================================================
+      
+      // Botão LIGAR -> publica "1"
+      btnOn.addEventListener('click', () => {
+        publishCommand('1');
+      });
+
+      // Botão DESLIGAR -> publica "0"
+      btnOff.addEventListener('click', () => {
+        publishCommand('0');
+      });
+
+      // Input de tópico: ao alterar, desinscreve do antigo e assina o novo automaticamente
+      let topicDebounceTimer = null;
+      topicInput.addEventListener('input', (e) => {
+        const newTopic = e.target.value.trim();
+        // Se estiver vazio, não faz nada (ou usa o padrão)
+        if (!newTopic) return;
+
+        // Debounce para evitar múltiplas assinaturas enquanto digita
+        if (topicDebounceTimer) clearTimeout(topicDebounceTimer);
+        topicDebounceTimer = setTimeout(() => {
+          if (!client || !isConnected) return;
+          
+          // Se o tópico digitado for diferente do atual, atualiza a inscrição
+          if (newTopic !== currentTopic) {
+            console.log(`Tópico alterado para: ${newTopic}`);
+            subscribeToTopic(newTopic);
+          }
+        }, 500); // 500ms de debounce
+      });
+
+      // ============================================================
+      // 6. Inicialização
+      // ============================================================
+      // Garante que o LED comece inativo (estado inicial)
+      updateLedFromMessage('0');
+
+      // Inicia a conexão MQTT após o carregamento completo da página
+      window.addEventListener('load', () => {
+        initMQTT();
+      });
+
+      // Tratamento de erros global (apenas para robustez)
+      window.addEventListener('error', (e) => {
+        console.warn('Erro capturado:', e.message);
+      });
+
+    })();
+  </script>
+</body>
+</html>
