@@ -1,0 +1,1 @@
+# -estrat-gias.de.gest-o.para.neg-cio.inovador4.0-
